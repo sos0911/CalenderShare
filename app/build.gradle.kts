@@ -83,6 +83,7 @@ dependencies {
     implementation(libs.firebase.auth.ktx)
     implementation(libs.firebase.firestore.ktx)
     implementation(libs.firebase.messaging.ktx)
+    implementation(libs.firebase.functions.ktx)
 
     // Google Auth & Calendar
     implementation(libs.play.services.auth)

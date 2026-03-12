@@ -6,6 +6,7 @@ import com.calendersharing.test.data.model.CalendarEvent
 import com.calendersharing.test.data.model.SharedCalendar
 import com.calendersharing.test.data.repository.GoogleCalendarRepository
 import com.calendersharing.test.data.repository.ShareRepository
+import com.google.firebase.functions.FirebaseFunctions
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -35,9 +36,25 @@ class CalendarViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(CalendarUiState())
     val uiState: StateFlow<CalendarUiState> = _uiState
 
+    private val functions = FirebaseFunctions.getInstance("asia-northeast3")
+
     init {
         loadMyEvents()
         observeSharedCalendars()
+        registerCalendarWatch()
+    }
+
+    private fun registerCalendarWatch() {
+        viewModelScope.launch {
+            try {
+                val accessToken = googleCalendarRepository.getAccessToken() ?: return@launch
+                val data = hashMapOf("accessToken" to accessToken)
+                functions.getHttpsCallable("registerCalendarWatch").call(data)
+                android.util.Log.d("CalendarVM", "Calendar watch registered successfully")
+            } catch (e: Exception) {
+                android.util.Log.w("CalendarVM", "Failed to register calendar watch: ${e.message}")
+            }
+        }
     }
 
     fun selectDate(date: LocalDate) {

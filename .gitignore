@@ -14,5 +14,6 @@ local.properties
 # Firebase & secrets
 google-services.json
 client_secret_*.json
+*-firebase-adminsdk-*.json
 *.keystore
 *.jks
