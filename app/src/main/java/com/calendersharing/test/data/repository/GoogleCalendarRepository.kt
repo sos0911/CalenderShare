@@ -10,6 +10,7 @@ import com.google.api.client.util.DateTime
 import com.google.api.services.calendar.Calendar
 import com.google.api.services.calendar.CalendarScopes
 import dagger.hilt.android.qualifiers.ApplicationContext
+import com.google.android.gms.auth.GoogleAuthUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.Collections
@@ -38,6 +39,19 @@ class GoogleCalendarRepository @Inject constructor(
             .build()
     }
 
+    suspend fun getAccessToken(): String? = withContext(Dispatchers.IO) {
+        try {
+            val account = GoogleSignIn.getLastSignedInAccount(context) ?: return@withContext null
+            GoogleAuthUtil.getToken(
+                context,
+                account.account!!,
+                "oauth2:${CalendarScopes.CALENDAR_READONLY}"
+            )
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     suspend fun getEvents(
         timeMinMillis: Long,
         timeMaxMillis: Long
@@ -63,6 +77,10 @@ class GoogleCalendarRepository @Inject constructor(
                     ?: 0L
                 val isAllDay = event.start?.dateTime == null
 
+                val eventTimeZone = event.start?.timeZone
+                    ?: event.end?.timeZone
+                    ?: java.util.TimeZone.getDefault().id
+
                 CalendarEvent(
                     id = event.id ?: "",
                     title = event.summary ?: "(제목 없음)",
@@ -72,7 +90,8 @@ class GoogleCalendarRepository @Inject constructor(
                     location = event.location ?: "",
                     isAllDay = isAllDay,
                     calendarId = "primary",
-                    ownerEmail = GoogleSignIn.getLastSignedInAccount(context)?.email ?: ""
+                    ownerEmail = GoogleSignIn.getLastSignedInAccount(context)?.email ?: "",
+                    timeZone = eventTimeZone
                 )
             } ?: emptyList()
 

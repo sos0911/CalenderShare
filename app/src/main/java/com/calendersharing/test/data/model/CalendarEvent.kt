@@ -10,7 +10,8 @@ data class CalendarEvent(
     val isAllDay: Boolean = false,
     val calendarId: String = "",
     val ownerEmail: String = "",
-    val color: String = "#4285F4"
+    val color: String = "#4285F4",
+    val timeZone: String = ""
 )
 
 data class SharedCalendar(

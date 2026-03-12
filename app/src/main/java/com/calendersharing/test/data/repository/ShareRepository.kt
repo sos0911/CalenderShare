@@ -116,19 +116,29 @@ class ShareRepository @Inject constructor(
 
     suspend fun syncEventsToFirestore(events: List<CalendarEvent>) {
         val user = firebaseAuth.currentUser ?: return
+        val email = user.email ?: return
 
         try {
-            val batch = firestore.batch()
+            // Delete old events for this user first
+            val oldDocs = sharedEventsCollection
+                .whereEqualTo("ownerEmail", email)
+                .get()
+                .await()
 
+            val batch = firestore.batch()
+            oldDocs.documents.forEach { batch.delete(it.reference) }
+
+            // Add current events
             events.forEach { event ->
                 val docRef = sharedEventsCollection
                     .document("${user.uid}_${event.id}")
-                batch.set(docRef, event.copy(ownerEmail = user.email ?: ""))
+                batch.set(docRef, event.copy(ownerEmail = email))
             }
 
             batch.commit().await()
+            android.util.Log.d("ShareRepo", "Synced ${events.size} events to Firestore")
         } catch (e: Exception) {
-            // Firestore 권한 오류 등은 무시하고 로컬에서만 표시
+            android.util.Log.e("ShareRepo", "Failed to sync events: ${e.message}")
         }
     }
 
