@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.PersonSearch
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -62,25 +63,69 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.calendersharing.test.data.model.CalendarEvent
+import com.calendersharing.test.data.repository.SettingsRepository
 import com.calendersharing.test.ui.viewmodel.AuthViewModel
 import com.calendersharing.test.ui.viewmodel.CalendarViewModel
+import com.calendersharing.test.ui.viewmodel.SettingsViewModel
 import java.time.Instant
 import java.time.LocalDate
 import java.time.YearMonth
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-import java.time.format.TextStyle
 import java.util.Locale
+
+private fun CalendarEvent.getZoneId(): ZoneId {
+    if (timeZone.isNotBlank()) {
+        try { return ZoneId.of(timeZone) } catch (_: Exception) {}
+    }
+    return ZoneId.systemDefault()
+}
+
+private fun CalendarEvent.datesInRange(): List<LocalDate> {
+    if (startTime <= 0) return emptyList()
+    val eventZone = getZoneId()
+    val startDate = Instant.ofEpochMilli(startTime).atZone(eventZone).toLocalDate()
+    val rawEndDate = if (endTime > 0) {
+        Instant.ofEpochMilli(endTime).atZone(eventZone).toLocalDate()
+    } else startDate
+    val endDate = if (isAllDay && rawEndDate.isAfter(startDate)) {
+        rawEndDate.minusDays(1)
+    } else rawEndDate
+    val dates = mutableListOf<LocalDate>()
+    var d = startDate
+    while (!d.isAfter(endDate)) {
+        dates.add(d)
+        d = d.plusDays(1)
+    }
+    return dates
+}
+
+private fun CalendarEvent.containsDate(date: LocalDate): Boolean {
+    if (startTime <= 0) return false
+    val eventZone = getZoneId()
+    val startDate = Instant.ofEpochMilli(startTime).atZone(eventZone).toLocalDate()
+    val rawEndDate = if (endTime > 0) {
+        Instant.ofEpochMilli(endTime).atZone(eventZone).toLocalDate()
+    } else startDate
+    val endDate = if (isAllDay && rawEndDate.isAfter(startDate)) {
+        rawEndDate.minusDays(1)
+    } else rawEndDate
+    return !date.isBefore(startDate) && !date.isAfter(endDate)
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CalendarScreen(
     deepLinkInviteCode: String? = null,
     onSignOut: () -> Unit,
+    onSettings: () -> Unit,
     calendarViewModel: CalendarViewModel = hiltViewModel(),
-    authViewModel: AuthViewModel = hiltViewModel()
+    authViewModel: AuthViewModel = hiltViewModel(),
+    settingsViewModel: SettingsViewModel = hiltViewModel()
 ) {
     val uiState by calendarViewModel.uiState.collectAsState()
+    val myColor by settingsViewModel.myEventColor.collectAsState()
+    val sharedColor by settingsViewModel.sharedEventColor.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
     var showShareDialog by remember { mutableStateOf(false) }
@@ -156,6 +201,9 @@ fun CalendarScreen(
                     IconButton(onClick = { showSharedCalendarsDialog = true }) {
                         Icon(Icons.Default.People, "공유 캘린더")
                     }
+                    IconButton(onClick = onSettings) {
+                        Icon(Icons.Default.Settings, "설정")
+                    }
                     IconButton(onClick = {
                         authViewModel.signOut()
                         onSignOut()
@@ -183,7 +231,10 @@ fun CalendarScreen(
         ) {
             MonthCalendarView(
                 selectedDate = uiState.selectedDate,
-                events = uiState.myEvents + uiState.sharedEvents.values.flatten(),
+                myEvents = uiState.myEvents,
+                sharedEvents = uiState.sharedEvents.values.flatten(),
+                myEventColor = Color(myColor),
+                sharedEventColor = Color(sharedColor),
                 onDateSelected = { calendarViewModel.selectDate(it) },
                 onMonthChanged = { calendarViewModel.selectDate(it) }
             )
@@ -201,7 +252,9 @@ fun CalendarScreen(
                 EventList(
                     selectedDate = uiState.selectedDate,
                     myEvents = uiState.myEvents,
-                    sharedEvents = uiState.sharedEvents
+                    sharedEvents = uiState.sharedEvents,
+                    myEventColor = Color(myColor),
+                    sharedEventColor = Color(sharedColor)
                 )
             }
         }
@@ -211,7 +264,10 @@ fun CalendarScreen(
 @Composable
 private fun MonthCalendarView(
     selectedDate: LocalDate,
-    events: List<CalendarEvent>,
+    myEvents: List<CalendarEvent>,
+    sharedEvents: List<CalendarEvent>,
+    myEventColor: Color,
+    sharedEventColor: Color,
     onDateSelected: (LocalDate) -> Unit,
     onMonthChanged: (LocalDate) -> Unit
 ) {
@@ -219,28 +275,8 @@ private fun MonthCalendarView(
     val daysInMonth = yearMonth.lengthOfMonth()
     val firstDayOfWeek = yearMonth.atDay(1).dayOfWeek.value % 7
 
-    val eventDates = events.flatMap { event ->
-        if (event.startTime <= 0) return@flatMap emptyList()
-        val startDate = Instant.ofEpochMilli(event.startTime)
-            .atZone(ZoneId.systemDefault())
-            .toLocalDate()
-        val rawEndDate = if (event.endTime > 0) {
-            Instant.ofEpochMilli(event.endTime)
-                .atZone(ZoneId.systemDefault())
-                .toLocalDate()
-        } else startDate
-        // 종일 이벤트: Google Calendar API는 endDate를 exclusive(다음 날 00:00)로 반환
-        val endDate = if (event.isAllDay && rawEndDate.isAfter(startDate)) {
-            rawEndDate.minusDays(1)
-        } else rawEndDate
-        val dates = mutableListOf<LocalDate>()
-        var d = startDate
-        while (!d.isAfter(endDate)) {
-            dates.add(d)
-            d = d.plusDays(1)
-        }
-        dates
-    }.toSet()
+    val myEventDates = myEvents.flatMap { it.datesInRange() }.toSet()
+    val sharedEventDates = sharedEvents.flatMap { it.datesInRange() }.toSet()
 
     Column(modifier = Modifier.padding(16.dp)) {
         Row(
@@ -301,7 +337,8 @@ private fun MonthCalendarView(
                         val date = yearMonth.atDay(currentDay)
                         val isSelected = date == selectedDate
                         val isToday = date == LocalDate.now()
-                        val hasEvents = eventDates.contains(date)
+                        val hasMy = myEventDates.contains(date)
+                        val hasShared = sharedEventDates.contains(date)
 
                         Box(
                             modifier = Modifier
@@ -329,16 +366,33 @@ private fun MonthCalendarView(
                                     color = if (isSelected) MaterialTheme.colorScheme.onPrimary
                                     else MaterialTheme.colorScheme.onSurface
                                 )
-                                if (hasEvents) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(4.dp)
-                                            .background(
-                                                if (isSelected) MaterialTheme.colorScheme.onPrimary
-                                                else MaterialTheme.colorScheme.primary,
-                                                CircleShape
+                                if (hasMy || hasShared) {
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                    ) {
+                                        if (hasMy) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(4.dp)
+                                                    .background(
+                                                        if (isSelected) MaterialTheme.colorScheme.onPrimary
+                                                        else myEventColor,
+                                                        CircleShape
+                                                    )
                                             )
-                                    )
+                                        }
+                                        if (hasShared) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(4.dp)
+                                                    .background(
+                                                        if (isSelected) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.7f)
+                                                        else sharedEventColor,
+                                                        CircleShape
+                                                    )
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -354,35 +408,16 @@ private fun MonthCalendarView(
 private fun EventList(
     selectedDate: LocalDate,
     myEvents: List<CalendarEvent>,
-    sharedEvents: Map<String, List<CalendarEvent>>
+    sharedEvents: Map<String, List<CalendarEvent>>,
+    myEventColor: Color,
+    sharedEventColor: Color
 ) {
-    val zone = ZoneId.systemDefault()
     val timeFormatter = DateTimeFormatter.ofPattern("HH:mm")
 
-    val filteredMyEvents = myEvents.filter { event ->
-        if (event.startTime <= 0) return@filter false
-        val startDate = Instant.ofEpochMilli(event.startTime).atZone(zone).toLocalDate()
-        val rawEndDate = if (event.endTime > 0) {
-            Instant.ofEpochMilli(event.endTime).atZone(zone).toLocalDate()
-        } else startDate
-        val endDate = if (event.isAllDay && rawEndDate.isAfter(startDate)) {
-            rawEndDate.minusDays(1)
-        } else rawEndDate
-        !selectedDate.isBefore(startDate) && !selectedDate.isAfter(endDate)
-    }
+    val filteredMyEvents = myEvents.filter { it.containsDate(selectedDate) }
 
     val filteredSharedEvents = sharedEvents.flatMap { (owner, events) ->
-        events.filter { event ->
-            if (event.startTime <= 0) return@filter false
-            val startDate = Instant.ofEpochMilli(event.startTime).atZone(zone).toLocalDate()
-            val rawEndDate = if (event.endTime > 0) {
-                Instant.ofEpochMilli(event.endTime).atZone(zone).toLocalDate()
-            } else startDate
-            val endDate = if (event.isAllDay && rawEndDate.isAfter(startDate)) {
-                rawEndDate.minusDays(1)
-            } else rawEndDate
-            !selectedDate.isBefore(startDate) && !selectedDate.isAfter(endDate)
-        }.map { it to owner }
+        events.filter { it.containsDate(selectedDate) }.map { it to owner }
     }
 
     LazyColumn(
@@ -416,12 +451,12 @@ private fun EventList(
                 Text(
                     text = "내 일정",
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = myEventColor,
                     fontWeight = FontWeight.Bold
                 )
             }
             items(filteredMyEvents) { event ->
-                EventCard(event = event, timeFormatter = timeFormatter, zone = zone)
+                EventCard(event = event, timeFormatter = timeFormatter, accentColor = myEventColor)
             }
         }
 
@@ -431,7 +466,7 @@ private fun EventList(
                 Text(
                     text = "공유 일정",
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.secondary,
+                    color = sharedEventColor,
                     fontWeight = FontWeight.Bold
                 )
             }
@@ -439,7 +474,7 @@ private fun EventList(
                 EventCard(
                     event = event,
                     timeFormatter = timeFormatter,
-                    zone = zone,
+                    accentColor = sharedEventColor,
                     ownerLabel = owner
                 )
             }
@@ -453,15 +488,14 @@ private fun EventList(
 private fun EventCard(
     event: CalendarEvent,
     timeFormatter: DateTimeFormatter,
-    zone: ZoneId,
+    accentColor: Color,
     ownerLabel: String? = null
 ) {
+    val zone = event.getZoneId()
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
-            containerColor = if (ownerLabel != null)
-                MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)
-            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+            containerColor = accentColor.copy(alpha = 0.1f)
         ),
         shape = RoundedCornerShape(12.dp)
     ) {
@@ -475,11 +509,7 @@ private fun EventCard(
                 modifier = Modifier
                     .width(4.dp)
                     .height(40.dp)
-                    .background(
-                        if (ownerLabel != null) MaterialTheme.colorScheme.secondary
-                        else MaterialTheme.colorScheme.primary,
-                        RoundedCornerShape(2.dp)
-                    )
+                    .background(accentColor, RoundedCornerShape(2.dp))
             )
             Spacer(modifier = Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
@@ -494,7 +524,7 @@ private fun EventCard(
                     Text(
                         text = ownerLabel,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.secondary
+                        color = accentColor
                     )
                 }
                 if (event.location.isNotBlank()) {

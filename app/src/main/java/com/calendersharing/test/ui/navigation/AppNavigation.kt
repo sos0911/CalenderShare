@@ -9,11 +9,13 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.calendersharing.test.ui.screen.calendar.CalendarScreen
 import com.calendersharing.test.ui.screen.login.LoginScreen
+import com.calendersharing.test.ui.screen.settings.SettingsScreen
 import com.calendersharing.test.ui.viewmodel.AuthViewModel
 
 sealed class Screen(val route: String) {
     data object Login : Screen("login")
     data object Calendar : Screen("calendar")
+    data object Settings : Screen("settings")
 }
 
 @Composable
@@ -46,7 +48,15 @@ fun AppNavigation(
                     navController.navigate(Screen.Login.route) {
                         popUpTo(Screen.Calendar.route) { inclusive = true }
                     }
+                },
+                onSettings = {
+                    navController.navigate(Screen.Settings.route)
                 }
+            )
+        }
+        composable(Screen.Settings.route) {
+            SettingsScreen(
+                onBack = { navController.popBackStack() }
             )
         }
     }
